@@ -1,48 +1,87 @@
-import { candidateProfile } from "@/app/src/lib/candidate";
-import { ai } from "@/app/src/lib/gemini";
+import { db } from "@/app/src/db";
+import { candidates, jobs } from "@/app/src/db/schema";
+import { generateEmbedding, saveJobEmbeddings } from "@/app/src/lib/embedding";
+import { generateJobAnalysisText } from "@/app/src/lib/job-analysis-service";
 import { jobAnalysisSchema } from "@/app/src/lib/job-analysis";
-import z from "zod";
+import { getSemanticScore } from "@/app/src/lib/jobMatching";
 
 export async function POST(req: Request) {
-  const { job_description } = await req.json();
+  let jobDescription: unknown;
 
-  const prompt = `
-  You are evaluating a candidate for a software engineering position.
-  Your job is to objectively determine how well the candidate matches
-  the job description.
-
-  Candidate Profile
-  ${JSON.stringify(candidateProfile, null, 2)}
-
-  Job Description
-  ${job_description}
-  `;
-
-  // AI analysis here
-  const aiResponse = await ai.models.generateContent({
-    model: "models/gemma-4-26b-a4b-it",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseJsonSchema: z.toJSONSchema(jobAnalysisSchema),
-    },
-  });
-
-  const embededJD = await ai.models.embedContent({
-    model: "gemini-embedding-2",
-    contents: job_description
-  })
-
-
-  const responseText = aiResponse.text;
-
-  if (!responseText) {
-    return Response.json({ error: "Gemini returned no text" }, { status: 500 });
+  try {
+    const body = await req.json();
+    jobDescription = body.job_description;
+  } catch {
+    return Response.json(
+      { error: "Invalid JSON request body" },
+      { status: 400 },
+    );
   }
 
-  const result = jobAnalysisSchema.parse(JSON.parse(responseText));
+  if (typeof jobDescription !== "string" || !jobDescription.trim()) {
+    return Response.json(
+      { error: "job_description is required" },
+      { status: 400 },
+    );
+  }
 
-  return Response.json({
-    data: result,
-  });
+  try {
+    const responseText = await generateJobAnalysisText(jobDescription);
+    if (!responseText) {
+      return Response.json(
+        { error: "Gemini returned no text" },
+        { status: 400 },
+      );
+    }
+
+    const result = jobAnalysisSchema.parse(JSON.parse(responseText));
+
+    const jobValues: typeof jobs.$inferInsert = {
+      role: result.role,
+      seniority: result.seniority,
+      requiredSkills: result.requiredSkills,
+      minimumYearsOfExperience: result.minimumYearsOfExperience,
+      educationRequirements: result.educationRequirements,
+      locationRequirements: result.locationRequirements,
+    };
+
+    const jobInfo = await db
+      .insert(jobs)
+      .values(jobValues)
+      .returning({ jobId: jobs.id });
+
+    const jobId = jobInfo[0]?.jobId;
+
+    if (!jobId) {
+      return Response.json(
+        { error: "Failed to save job analysis" },
+        { status: 500 },
+      );
+    }
+
+    const [embededJD, candidateInfo] = await Promise.all([
+      generateEmbedding(responseText),
+      db.select({ candidateId: candidates.id }).from(candidates),
+    ]);
+
+    await saveJobEmbeddings(jobId, embededJD, jobDescription);
+
+    const candidateId = candidateInfo[0]?.candidateId;
+
+    if (!candidateId) {
+      return Response.json(
+        { error: "Candidate profile is not seeded" },
+        { status: 500 },
+      );
+    }
+
+    const score = await getSemanticScore(candidateId, jobId);
+
+    return Response.json({
+      data: score,
+    });
+  } catch (error) {
+    console.error("Failed to analyze job:", error);
+    return Response.json({ error: "Failed to analyze job" }, { status: 500 });
+  }
 }

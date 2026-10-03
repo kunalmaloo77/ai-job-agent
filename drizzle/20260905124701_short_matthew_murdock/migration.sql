@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" DROP COLUMN "preferred_roles";

@@ -1,9 +1,13 @@
 "use client";
+import { z } from "zod";
+import { jobAnalysisSchema } from "./src/lib/job-analysis";
 
-type requiredSkillsType = {
-  skill: string,
-  evidence: string, 
-}
+type JobAnalysis = z.infer<typeof jobAnalysisSchema>;
+
+type AnalyzeJobResponse = {
+  data: JobAnalysis;
+};
+
 export default function Home() {
   const handleSubmit = async (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -24,34 +28,11 @@ export default function Home() {
           throw new Error("Network response was not ok");
         }
 
-        const data = await response.json();
+        const { data }: AnalyzeJobResponse = await response.json();
 
-        if(!data){
-          throw new Error("Could not generate data");
+        if (!data) {
+          throw new Error("Invalid response data");
         }
-        const roleText = data?.role || 'Full Stack Engineer';
-        const responsibilityText = data?.responsibilities?.map((responsibility: string) => `- ${responsibility}`
-        ).join("\n");
-        const requiredSkillsText = data?.requiredSkills?.flat()?.map((item: requiredSkillsType) => item.skill).join(", ");
-        const preferredSkills = data?.preferredSkills?.map((skill: string) => `- ${skill}`).join("\n");
-        const experience = data?.minimumYearsOfExperience;
-        
-        const textForEmbedding = `
-          Role: ${roleText}
-          Responsibilities: 
-          ${responsibilityText} 
-          RequiredSkills: ${requiredSkillsText}
-          PreferredSkills: 
-          ${preferredSkills}
-          Experience:
-          ${experience} years
-        `
-
-        const embededContent = await fetch("api/generate-embedding", {
-          method: "POST",
-          body: textForEmbedding
-        })
-
       } catch (error) {
         console.error("Error submitting job description:", error);
       }
@@ -59,19 +40,44 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen py-2">
-      <form onSubmit={handleSubmit} className="flex flex-col items-center">
-        <label htmlFor="job-description">Job Description</label>
-        <textarea
-          id="job-description"
-          name="job-description"
-          rows={10}
-          cols={50}
-          placeholder="Enter job description here..."
-        ></textarea>
-        <br />
-        <button type="submit">Submit</button>
-      </form>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+      <div className="w-full max-w-2xl rounded-2xl bg-white p-8 shadow-sm border border-gray-200">
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold text-gray-900">
+            Analyze Job Description
+          </h1>
+          <p className="mt-2 text-sm text-gray-500">
+            Paste the job description below to analyze how well it matches your
+            profile.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label
+              htmlFor="job-description"
+              className="mb-2 block text-sm font-medium text-gray-700"
+            >
+              Job Description
+            </label>
+
+            <textarea
+              id="job-description"
+              name="job-description"
+              rows={12}
+              placeholder="Paste the complete job description here..."
+              className="w-full resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-900 focus:ring-2 focus:ring-gray-900/10"
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="w-full rounded-xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:ring-offset-2"
+          >
+            Analyze Job
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
